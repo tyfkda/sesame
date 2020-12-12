@@ -1,0 +1,251 @@
+require 'set'
+
+class VReg
+  attr_reader :sym
+  attr_accessor :gen
+  attr_reader :value
+
+  def self.const(value)
+    vreg = VReg.new(nil, nil, value: value)
+  end
+
+  def initialize(sym, gen, value: nil)
+    @sym = sym
+    @gen = gen
+    @value = value
+  end
+
+  def const?()
+    @value != nil
+  end
+
+  def not_const?()
+    @value == nil
+  end
+
+  def <=>(other)
+    self.inspect() <=> other.inspect()
+  end
+
+  def inspect
+    if @value != nil
+      "$#{@value.inspect}"
+    elsif @gen
+      "%#{@sym}:#{@gen}"
+    else
+      "%#{@sym}"
+    end
+  end
+end
+
+class Object
+  def vreg?
+    self.is_a?(VReg)
+  end
+end
+
+class IR
+  attr_accessor :op, :dst, :opr1, :opr2, :cond, :bb, :name, :args, :funcindex
+
+  def self.mov(dst, opr1)
+    IR.new(:MOV, dst, opr1)
+  end
+
+  def self.bop(kind, dst, lhs, rhs)
+    IR.new(kind, dst, lhs, rhs)
+  end
+
+  def self.cmp(opr1, opr2)
+    IR.new(:CMP, nil, opr1, opr2)
+  end
+
+  def self.jmp(cond, bb)
+    IR.new(:JMP, cond: cond, bb: bb)
+  end
+
+  def self.result(opr1)
+    IR.new(:RESULT, nil, opr1)
+  end
+
+  def self.call(dst, name, args)
+    IR.new(:CALL, dst, name: name, args: args)
+  end
+
+  def self.defun(name, funcindex)
+    IR.new(:DEFUN, nil, name: name, funcindex: funcindex)
+  end
+
+  def initialize(op, dst = nil, opr1 = nil, opr2 = nil, cond: nil, bb: nil, name: nil, args: nil, funcindex: nil)
+    @op = op
+    @dst = dst
+    @opr1 = opr1
+    @opr2 = opr2
+    @cond = cond
+    @bb = bb
+    @name = name
+    @args = args
+    @funcindex = funcindex
+  end
+
+  def clear()
+    @op = :NOP
+    @dst = @opr1 = @opr2 = @cond = @bb = @name = @args = @funcindex = nil
+  end
+
+  def [](key)
+    instance_variable_get("@#{key}")
+  end
+
+  def []=(key, val)
+    instance_variable_set("@#{key}", val)
+  end
+
+  def inspect
+    case @op
+    when :DEFUN
+      "DEFUN: #{@name} = \##{@funcindex}"
+    when :JMP
+      "J#{@cond || 'MP'}  #{@bb.index}"
+    when :CALL
+      "CALL  #{@dst.inspect} <= #{@name} [#{@args.map {|arg| arg.inspect}.join(', ')}]"
+    else
+      "#{@op}  #{@dst&.inspect}#{@opr1 ? (@dst ? ', ' : '') + @opr1.inspect : ''}#{@opr2 ? ', ' + @opr2.inspect : ''}"
+    end
+  end
+end
+
+class BB
+  attr_reader :index
+  attr_reader :irs
+  attr_accessor :next_bb
+
+  attr_reader :in_regs, :out_regs, :assigned_regs
+  attr_reader :from_bbs, :to_bbs
+  attr_reader :phis
+
+  def initialize(index, irs = [])
+    @index = index
+    @irs = irs
+    @next_bb = nil
+    @in_regs = Hash.new()
+    @out_regs = Hash.new()
+    @assigned_regs = Set.new()
+    @from_bbs = []
+    @to_bbs = []
+  end
+
+  def set_next()
+    to_bbs = []
+    to_bbs.push(@next_bb) if @next_bb
+    unless irs.empty?
+      last = irs.last
+      if last.op == :JMP
+        unless last.cond
+          to_bbs.clear()
+        end
+        to_bbs.push(last.bb)
+      end
+    end
+    @to_bbs = to_bbs
+  end
+
+  def length()
+    @irs.length
+  end
+
+  def [](key)
+    @irs[key]
+  end
+
+  def delete_at(key)
+    @irs.delete_at(key)
+  end
+
+  def inspect()
+    "BB\##{@index}"
+  end
+
+  def dump()
+    puts "### BB #{@index}: " + [
+      !@from_bbs.empty? && "from=#{@from_bbs.map{|b| b.index}.inspect}",
+      !@to_bbs.empty? && "to=#{@to_bbs.map{|b| b.index}.inspect}",
+      !@in_regs.empty? && "in=#{@in_regs.inspect}",
+      !@out_regs.empty? && "out=#{@out_regs.inspect}",
+    ].select {|s| s}.join(', ')
+
+    @irs.each do |ir|
+      puts "  #{ir.inspect}"
+    end
+  end
+end
+
+class BBContainer
+  attr_accessor :bbs, :params
+
+  def initialize(params)
+    @params = params
+    @bbs = []
+  end
+
+  def optimize()
+    analyze_flow()
+  end
+
+  def analyze_flow()
+    @bbs.map! do |bb|
+      bb.set_next()
+      if bb.index > 0 && bb.from_bbs.empty?
+        nil
+      else
+        bb.to_bbs.each do |nb|
+          nb.from_bbs.push(bb)
+        end
+        bb
+      end
+    end.filter! {|bb| bb}
+
+    reg_gens = Hash.new {|h, k| h[k] = 0}
+    @bbs.each do |bb|
+      bb.irs.each do |ir|
+        vregs = [ir.opr1, ir.opr2]
+        vregs.concat(ir.args) if ir.args
+        vregs.filter! {|x| x&.not_const?}
+        vregs.each do |vreg|
+          unless bb.in_regs.has_key?(vreg.sym) || bb.assigned_regs.include?(vreg.sym)
+            bb.in_regs[vreg.sym] = nil
+          end
+        end
+
+        if ir.dst
+          gen = reg_gens[ir.dst.sym]
+          reg_gens[ir.dst.sym] += 1
+          bb.assigned_regs.add(ir.dst.sym)
+        end
+      end
+    end
+
+    # Propagate in regs to previous BB.
+    propagate = -> (sym, from_bbs) {
+      from_bbs.each do |from|
+        unless from.out_regs.has_key?(sym)
+          from.out_regs[sym] = nil
+        end
+        unless from.assigned_regs.include?(sym) || from.in_regs.has_key?(sym)
+          from.in_regs[sym] = nil
+          propagate.call(sym, from.from_bbs)
+        end
+      end
+    }
+    @bbs.each do |bb|
+      bb.in_regs.keys.each do |sym|
+        propagate.call(sym, bb.from_bbs)
+      end
+    end
+  end
+
+  def dump()
+    @bbs.each do |bb|
+      bb.dump()
+    end
+  end
+end

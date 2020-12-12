@@ -1,0 +1,40 @@
+#!/usr/bin/env ruby
+# -*- mode: ruby;-*-
+
+require 'optparse'
+require './lib/compiler'
+require './lib/vm'
+require './runtime'
+
+def main()
+  optimize = 1
+  opt = OptionParser.new
+  opt.on('--dump-ir')
+  opt.on('-O level') {|v| optimize = v.to_i}
+  params = {}
+  opt.parse!(ARGV, into: params)
+
+  compiler = Compiler.new()
+  compiler.compile(ARGF)
+  if optimize > 0
+    compiler.optimize()
+  end
+
+  if params[:"dump-ir"]
+    compiler.dump()
+    return
+  end
+
+  global = {
+    array_new: ->(n) { array_new(n) },
+    array_get: ->(array, i) { array_get(array, i) },
+    array_set: ->(array, i, value) { array_set(array, i, value) },
+    puts: ->(x) { puts(x) },
+  }
+  vm = VM.new(global, compiler.bbcon_array)
+  vm.run()
+end
+
+if $0 == __FILE__
+  main()
+end

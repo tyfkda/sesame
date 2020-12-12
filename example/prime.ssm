@@ -1,0 +1,22 @@
+def prime?(x)
+  i = 2
+  while i * i <= x
+    if x % i == 0
+      return 0
+    end
+    i = i + 1
+  end
+  return 1
+end
+
+def enum_prime(n)
+  i = 2
+  while i < n
+    if prime?(i) != 0
+      puts(i)
+    end
+    i = i + 1
+  end
+end
+
+enum_prime(100 + 1)
