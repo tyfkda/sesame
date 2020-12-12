@@ -1,6 +1,7 @@
 class VM
   def run(bbs)
     @regs = {}
+    @flag = 0
 
     ib = 0
     ip = 0
@@ -23,6 +24,27 @@ class VM
       when :ADD
         dst = ir.dst
         @regs[dst] = value(ir.opr1) + value(ir.opr2)
+      when :CMP
+        @flag = value(ir.opr1) - value(ir.opr2)
+      when :JMP
+        jmp = case ir.cond
+          when nil
+            true
+          when :<
+            @flag < 0
+          when :<=
+            @flag <= 0
+          when :>
+            @flag > 0
+          when :>=
+            @flag >= 0
+          else
+            error("Unhandled cond: #{ir.cond.inspect}")
+        end
+        if jmp
+          ib = ir.opr1
+          ip = 0
+        end
       when :RET
         return value(ir.opr1)
       else
