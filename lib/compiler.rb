@@ -146,11 +146,21 @@ class Compiler
       src = gen_expr(ast[3])
       @curbb.irs.push(IR::mov(dst, src))
       dst
-    when :"+"
+    when :+, :-, :*, :/
       lhs = gen_expr(ast[2])
       rhs = gen_expr(ast[3])
       dst = new_vreg()
-      @curbb.irs.push(IR::add(dst, lhs, rhs))
+      case ast[1]
+      when :+
+        kind = :ADD
+      when :-
+        kind = :SUB
+      when :*
+        kind = :MUL
+      when :/
+        kind = :DIV
+      end
+      @curbb.irs.push(IR::bop(kind, dst, lhs, rhs))
       dst
     else
       error("Unhandled gen_bop: #{ast.inspect}")

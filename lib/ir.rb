@@ -6,6 +6,10 @@ class GenReg
     @gen = gen
   end
 
+  def <=>(other)
+    self.inspect() <=> other.inspect()
+  end
+
   def inspect
     "%#{@sym}:#{@gen}"
   end
@@ -32,8 +36,8 @@ class IR
     IR.new(:MOV, dst, opr1)
   end
 
-  def self.add(dst, lhs, rhs)
-    IR.new(:ADD, dst, lhs, rhs)
+  def self.bop(kind, dst, lhs, rhs)
+    IR.new(kind, dst, lhs, rhs)
   end
 
   def self.cmp(opr1, opr2)
@@ -68,6 +72,21 @@ class IR
 
   def nop?()
     @op == :NOP
+  end
+
+  def sorted_operands()
+    order = [@opr1, @opr2]
+    case @op
+    when :ADD, :SUB, :MUL, :DIV
+      order.sort! do |a, b|
+        if a.genreg? != b.genreg?
+          a.genreg? ? -1 : 1
+        else
+          a <=> b
+        end
+      end
+    end
+    order
   end
 
   def [](key)
@@ -161,6 +180,7 @@ class BBContainer
   def initialize(bbs)
     @bbs = bbs
     @const_regs = {}
+    @computed = {}
   end
 
   def analyze()
@@ -278,10 +298,29 @@ class BBContainer
             @const_regs[ir.dst] = ir.opr1
             ir.clear()
           end
-        when :ADD
-          if !ir.opr1.genreg? && !ir.opr2.genreg?
-            @const_regs[ir.dst] = ir.opr1 + ir.opr2
+        when :ADD, :SUB, :MUL, :DIV
+          key = [ir.op, *ir.sorted_operands()]
+          if @computed.has_key?(key)
+            @const_regs[ir.dst] = @computed[key].dst
             ir.clear()
+          elsif !ir.opr1.genreg? && !ir.opr2.genreg?
+            case ir.op
+            when :ADD
+              value = ir.opr1 + ir.opr2
+            when :SUB
+              value = ir.opr1 - ir.opr2
+            when :MUL
+              value = ir.opr1 * ir.opr2
+            when :DIV
+              value = ir.opr1 / ir.opr2
+            else
+              error("Unhandled: #{ir}")
+            end
+            @const_regs[ir.dst] = value
+            ir.clear()
+          else
+            key = [ir.op, *ir.sorted_operands()]
+            @computed[key] = ir
           end
         end
       end

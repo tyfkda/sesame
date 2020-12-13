@@ -24,6 +24,15 @@ class VM
       when :ADD
         dst = ir.dst
         @regs[dst] = value(ir.opr1) + value(ir.opr2)
+      when :SUB
+        dst = ir.dst
+        @regs[dst] = value(ir.opr1) - value(ir.opr2)
+      when :MUL
+        dst = ir.dst
+        @regs[dst] = value(ir.opr1) * value(ir.opr2)
+      when :DIV
+        dst = ir.dst
+        @regs[dst] = value(ir.opr1) / value(ir.opr2)
       when :CMP
         @flag = value(ir.opr1) - value(ir.opr2)
       when :JMP
