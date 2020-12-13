@@ -5,7 +5,17 @@ class GenReg
   end
 
   def inspect
-    "%#{@sym}#{@gen}"
+    "%#{@sym}:#{@gen}"
+  end
+end
+
+class Object
+  def sym?
+    self.is_a?(Symbol)
+  end
+
+  def genreg?
+    self.is_a?(GenReg)
   end
 end
 
@@ -28,24 +38,8 @@ class IR
     IR.new(:CMP, nil, opr1, opr2)
   end
 
-  def self.jmp(bbno)
-    IR.new(:JMP, nil, bbno)
-  end
-
-  def self.jlt(bbno)
-    IR.new(:JMP, nil, bbno, cond: :LT)
-  end
-
-  def self.jle(bbno)
-    IR.new(:JMP, nil, bbno, cond: :LE)
-  end
-
-  def self.jgt(bbno)
-    IR.new(:JMP, nil, bbno, cond: :GT)
-  end
-
-  def self.jge(bbno)
-    IR.new(:JMP, nil, bbno, cond: :GE)
+  def self.jmp(cond, bbno)
+    IR.new(:JMP, nil, bbno, cond: cond)
   end
 
   def self.ret(opr1)
@@ -94,24 +88,20 @@ class IR
   end
 end
 
-class Object
-  def sym?
-    self.is_a?(Symbol)
-  end
-
-  def genreg?
-    self.is_a?(GenReg)
-  end
-end
-
 class BB
+  attr_reader :index
   attr_reader :irs
+  attr_accessor :next_bb
+
   attr_reader :in_regs, :out_regs, :assigned_regs
   attr_reader :to_bbs, :from_bbs
   attr_reader :phis
 
-  def initialize(irs)
-    @irs = irs
+  def initialize(index)
+    @index = index
+    @irs = []
+    @next_bb = nil
+
     @in_regs = Hash.new()
     @out_regs = Hash.new()
     @assigned_regs = Hash.new()
@@ -154,8 +144,8 @@ class BB
     @irs.insert(pos, *phis)
   end
 
-  def dump(ib)
-    puts "### BB #{ib}: to=#{@to_bbs.inspect}, from=#{@from_bbs.inspect}, in=#{@in_regs.inspect}, out=#{@out_regs.inspect}"
+  def dump()
+    puts "### BB #{@index}: to=#{@to_bbs.inspect}, from=#{@from_bbs.inspect}, in=#{@in_regs.inspect}, out=#{@out_regs.inspect}"
     #puts "assign=#{@assigned_regs.inspect}"
 
     @irs.each do |ir|
@@ -329,98 +319,8 @@ class BBContainer
   end
 
   def dump()
-    @bbs.each_with_index do |bb, ib|
-      bb.dump(ib)
+    @bbs.each do |bb|
+      bb.dump()
     end
   end
 end
-
-class VM
-  def run(bbs)
-    @regs = {}
-    @flag = 0
-
-    ib = 0
-    ip = 0
-
-    loop do
-      if ip >= bbs[ib].length
-        ip = 0
-        ib += 1
-        break if ib >= bbs.length
-      end
-      ir = bbs[ib][ip]
-      ip +=1
-
-      case ir.op
-      when :NOP
-        # nop
-      when :MOV
-        dst = ir.dst
-        @regs[dst] = value(ir.opr1)
-      when :ADD
-        dst = ir.dst
-        @regs[dst] = value(ir.opr1) + value(ir.opr2)
-      when :CMP
-        @flag = value(ir.opr1) - value(ir.opr2)
-      when :JMP
-        jmp = case ir.cond
-              when :LT
-                @flag < 0
-              when :LE
-                @flag <= 0
-              when :GT
-                @flag > 0
-              when :GE
-                @flag >= 0
-              else
-                true
-              end
-        if jmp
-          ib = ir.opr1
-          ip = 0
-        end
-      when :RET
-        return value(ir.opr1)
-      else
-        $stderr.puts "Unknown: #{ir.inspect}"
-        exit 1
-      end
-    end
-  end
-
-  def value(v)
-    if v.genreg? || v.sym?
-      @regs[v]
-    else
-      v
-    end
-  end
-end
-
-BBS = [
-  BB.new([
-      IR::mov(:A, 0),
-      IR::mov(:I, 1),
-    ]),
-  BB.new([
-      IR::cmp(:I, 10),
-      IR::jgt(3),
-    ]),
-  BB.new([
-      IR::add(:A, :A, :I),
-      IR::add(:I, :I, 1),
-      IR::jmp(1),
-    ]),
-  BB.new([
-      IR::ret(:A),
-    ]),
-]
-
-bbs = BBContainer.new(BBS)
-bbs.analyze()
-bbs.dump()
-
-vm = VM.new()
-result = vm.run(bbs.bbs)
-puts "\nresult=#{result}"
