@@ -6,10 +6,10 @@ class VM
     ip = 0
 
     loop do
-      if ip >= bbs[ib].length
+      while ip >= bbs[ib].length
         ip = 0
         ib += 1
-        break if ib >= bbs.length
+        return nil if ib >= bbs.length
       end
       ir = bbs[ib][ip]
       ip += 1

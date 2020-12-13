@@ -64,11 +64,14 @@ class IR
 end
 
 class BB
+  attr_reader :index
   attr_reader :irs
+  attr_accessor :next_bb
 
-  def initialize(index, irs)
+  def initialize(index)
     @index = index
-    @irs = irs
+    @irs = []
+    @next_bb = nil
   end
 
   def length()
@@ -93,6 +96,8 @@ class BB
 end
 
 class BBContainer
+  attr_accessor :bbs
+
   def initialize(bbs)
     @bbs = bbs
     @const_regs = {}

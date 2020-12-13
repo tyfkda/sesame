@@ -1,29 +1,16 @@
 #!/usr/bin/env ruby
 # -*- mode: ruby;-*-
 
-require './lib/ir'
+require './lib/compiler'
 require './lib/vm'
 
-BBS = [
-  BB.new(0, [
-    IR::mov(:A, 1),
-    IR::mov(:A, 2),
-    IR::mov(:B, 3),
-    IR::add(:C, :A, :B),
-    IR::ret(:C),
-  ]),
-]
-
 def main()
-  bbcon = BBContainer.new(BBS)
-  bbcon.dump()
-  bbcon.analyze()
-
-  puts "\nSSA result:"
+  compiler = Compiler.new()
+  bbcon = compiler.compile(ARGV[0])
   bbcon.dump()
 
   vm = VM.new()
-  result = vm.run(BBS)
+  result = vm.run(bbcon.bbs)
   p result
 end
 
