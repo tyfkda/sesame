@@ -1,4 +1,6 @@
 class GenReg
+  attr_reader :sym, :gen
+
   def initialize(sym, gen)
     @sym = sym
     @gen = gen
@@ -289,8 +291,17 @@ class BBContainer
   def resolve_phi()
     @bbs.each do |bb|
       bb.from_bbs.each do |from|
+        left_in_regs = bb.in_regs.keys
         from_bb = @bbs[from]
-        movs = bb.in_regs.keys.map do |sym|
+        from_bb.irs.each do |ir|
+          if ir.dst && bb.in_regs.has_key?(ir.dst.sym)
+            sym = ir.dst.sym
+            dst_reg = @gen_regs[sym][bb.in_regs[sym]]
+            ir.dst = dst_reg
+            left_in_regs.delete(sym)
+          end
+        end
+        movs = left_in_regs.map do |sym|
           next unless bb.in_regs[sym]
           dst_reg = @gen_regs[sym][bb.in_regs[sym]]
           src_gen = from_bb.out_regs[sym]
