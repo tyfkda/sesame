@@ -27,14 +27,12 @@ def simplify_expr(expr)
     assert(expr[1].length == 1)
     simplify_expr(expr[1].first)
   when :binary
-    [:expr,
-      [:bop, expr[2],
-        simplify_expr(expr[1]),
-        simplify_expr(expr[3])]]
+    [expr[2],
+      simplify_expr(expr[1]),
+      simplify_expr(expr[3])]
   when :unary
-    [:expr,
-      [:unary, expr[1],
-        simplify_expr(expr[2])]]
+    [expr[1],
+      simplify_expr(expr[2])]
   else
     error("Unhandled expr: #{expr.inspect}")
   end
@@ -47,7 +45,7 @@ def simplify_stmt(stmt)
       *stmt.map {|s| simplify_stmt(s)}]
   when :assign
     [:expr,
-      [:bop, :"=",
+      [:"=",
         simplify_expr(stmt[1]),
         simplify_expr(stmt[2])]]
   when :if
