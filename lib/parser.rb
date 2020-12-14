@@ -19,7 +19,7 @@ def simplify_expr(expr)
     when :@ident
       expr[1][1].to_sym
     else
-      assert(false)
+      error("Unhandled expr: #{expr.inspect}")
     end
   when :@int
     expr[1].to_i

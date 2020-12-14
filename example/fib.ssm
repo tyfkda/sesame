@@ -7,7 +7,7 @@ def fib(n)
 end
 
 def main()
-  return fib(10)
+  puts(fib(10))
 end
 
-return main()
+main()

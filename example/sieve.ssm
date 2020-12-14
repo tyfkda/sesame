@@ -1,0 +1,17 @@
+def sieve(n)
+  array = array_new(n)
+  i = 2
+  while i < n
+    if array_get(array, i) == 0
+      puts(i)
+      j = i
+      while j < n
+        array_set(array, j, 1)
+        j = j + i
+      end
+    end
+    i = i + 1
+  end
+end
+
+sieve(100 + 1)

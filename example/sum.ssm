@@ -4,4 +4,4 @@ while i > 0
   a = a + i
   i = i - 1
 end
-return a
+puts(a)
