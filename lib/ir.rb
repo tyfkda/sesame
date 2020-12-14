@@ -1,9 +1,24 @@
-class GenReg
-  attr_reader :sym, :gen
+class VReg
+  attr_reader :sym
+  attr_accessor :gen
+  attr_reader :value
 
-  def initialize(sym, gen)
+  def self.const(value)
+    vreg = VReg.new(nil, nil, value: value)
+  end
+
+  def initialize(sym, gen, value: nil)
     @sym = sym
     @gen = gen
+    @value = value
+  end
+
+  def const?()
+    @value != nil
+  end
+
+  def not_const?()
+    @value == nil
   end
 
   def <=>(other)
@@ -11,17 +26,17 @@ class GenReg
   end
 
   def inspect
-    "%#{@sym}:#{@gen}"
+    if @value != nil
+      "$#{@value.to_s}"
+    else
+      "%#{@sym}:#{@gen}"
+    end
   end
 end
 
 class Object
-  def sym?
-    self.is_a?(Symbol)
-  end
-
-  def genreg?
-    self.is_a?(GenReg)
+  def vreg?
+    self.is_a?(VReg)
   end
 end
 
@@ -80,8 +95,8 @@ class IR
     case @op
     when :ADD, :SUB, :MUL, :DIV, :MOD
       order.sort! do |a, b|
-        if a.genreg? != b.genreg?
-          a.genreg? ? -1 : 1
+        if a.vreg? != b.vreg?
+          a.vreg? ? -1 : 1
         else
           a <=> b
         end
@@ -170,8 +185,12 @@ class BB
   end
 
   def dump()
-    puts "### BB #{@index}: to=#{@to_bbs.map{|b| b.index}.inspect}, from=#{@from_bbs.map{|b| b.index}.inspect}, in=#{@in_regs.inspect}, out=#{@out_regs.inspect}"
-    #puts "assign=#{@assigned_regs.inspect}"
+    puts "### BB #{@index}: " + [
+      to_bbs && "to=#{@to_bbs.map{|b| b.index}.inspect}",
+      from_bbs && "from=#{@from_bbs.map{|b| b.index}.inspect}",
+      in_regs && "in=#{@in_regs.inspect}",
+      out_regs && "out=#{@out_regs.inspect}",
+    ].select {|s| s}.join(', ')
 
     @irs.each do |ir|
       puts "  #{ir.inspect}"
@@ -204,15 +223,15 @@ class BBContainer
       end
 
       bb.irs.each do |ir|
-        syms = [ir.opr1, ir.opr2].filter {|x| x.sym?}
-        syms.each do |sym|
-          unless bb.in_regs.has_key?(sym) || bb.assigned_regs.has_key?(sym)
-            bb.in_regs[sym] = nil
+        vregs = [ir.opr1, ir.opr2].filter {|x| x&.not_const?}
+        vregs.each do |vreg|
+          unless bb.in_regs.has_key?(vreg.sym) || bb.assigned_regs.has_key?(vreg.sym)
+            bb.in_regs[vreg.sym] = nil
           end
         end
 
-        if ir.dst && !bb.assigned_regs.has_key?(ir.dst)
-          bb.assigned_regs[ir.dst] = nil
+        if ir.dst && !bb.assigned_regs.has_key?(ir.dst.sym)
+          bb.assigned_regs[ir.dst.sym] = nil
         end
       end
     end
@@ -247,26 +266,33 @@ class BBContainer
       bb.in_regs.keys.each do |sym|
         gen = reg_gens[sym] += 1
         bb.in_regs[sym] = gen
-        @gen_regs[sym].push(GenReg.new(sym, gen))
+        @gen_regs[sym].push(VReg.new(sym, gen))
       end
 
       bb.irs.each do |ir|
-        if ir.opr1.sym?
-          ir.opr1 = @gen_regs[ir.opr1][reg_gens[ir.opr1]]
+        if ir.opr1&.not_const?
+          ir.opr1 = @gen_regs[ir.opr1.sym][reg_gens[ir.opr1.sym]]
         end
-        if ir.opr2.sym?
-          ir.opr2 = @gen_regs[ir.opr2][reg_gens[ir.opr2]]
+        if ir.opr2&.not_const?
+          ir.opr2 = @gen_regs[ir.opr2.sym][reg_gens[ir.opr2.sym]]
         end
-        if ir.dst.sym?
-          sym = ir.dst
-          gen = reg_gens.has_key?(sym) ? reg_gens[sym] + 1 : 0
+        if ir.dst
+          vreg = ir.dst
+          sym = vreg.sym
+          if reg_gens.has_key?(sym)
+            gen = reg_gens[sym] + 1
+            vreg = VReg.new(sym, gen)
+            ir.dst = vreg
+          else
+            vreg.gen = gen = 0
+          end
           reg_gens[sym] = gen
-          @gen_regs[sym].push(ir.dst = GenReg.new(sym, gen))
+          @gen_regs[sym].push(vreg)
         end
       end
 
-      bb.out_regs.keys.each do |sym|
-        bb.out_regs[sym] = reg_gens[sym]
+      bb.out_regs.keys.each do |vreg|
+        bb.out_regs[vreg] = reg_gens[vreg]
       end
     end
   end
@@ -292,38 +318,36 @@ class BBContainer
         end
 
         slots.each do |slot|
-          if ir[slot].genreg? && @const_regs.has_key?(ir[slot])
+          if ir[slot]&.not_const? && @const_regs.has_key?(ir[slot])
             ir[slot] = @const_regs[ir[slot]]
           end
         end
 
         case ir.op
         when :MOV
-          if !ir.opr1.genreg?
-            @const_regs[ir.dst] = ir.opr1
-            ir.clear()
-          end
+          @const_regs[ir.dst] = ir.opr1
+          ir.clear()
         when :ADD, :SUB, :MUL, :DIV, :MOD
           key = [ir.op, *ir.sorted_operands()]
           if @computed.has_key?(key)
             @const_regs[ir.dst] = @computed[key].dst
             ir.clear()
-          elsif !ir.opr1.genreg? && !ir.opr2.genreg?
+          elsif ir.opr1.const? && ir.opr2.const?
             case ir.op
             when :ADD
-              value = ir.opr1 + ir.opr2
+              value = ir.opr1.value + ir.opr2.value
             when :SUB
-              value = ir.opr1 - ir.opr2
+              value = ir.opr1.value - ir.opr2.value
             when :MUL
-              value = ir.opr1 * ir.opr2
+              value = ir.opr1.value * ir.opr2.value
             when :DIV
-              value = ir.opr1 / ir.opr2
+              value = ir.opr1.value / ir.opr2.value
             when :MOD
-              value = ir.opr1 % ir.opr2
+              value = ir.opr1.value % ir.opr2.value
             else
               error("Unhandled: #{ir}")
             end
-            @const_regs[ir.dst] = value
+            @const_regs[ir.dst] = VReg::const(value)
             ir.clear()
           else
             key = [ir.op, *ir.sorted_operands()]

@@ -71,10 +71,10 @@ class VM
   end
 
   def value(v)
-    if v.genreg? || v.sym?
-      @regs[v]
+    if v.const?
+      v.value
     else
-      v
+      @regs[v]
     end
   end
 end

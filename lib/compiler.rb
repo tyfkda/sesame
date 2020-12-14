@@ -5,6 +5,7 @@ class Compiler
   def initialize
     @bbs = []
     @bbindex = 0
+    @vars = {}
     @vreg_count = 0
     set_curbb(bb_new())
   end
@@ -117,8 +118,10 @@ class Compiler
 
   def gen_expr(ast)
     case ast
-    when Symbol, Integer
-      ast
+    when Integer
+      VReg::const(ast)
+    when Symbol
+      @vars[ast] ||= VReg.new(ast, nil)
     when Array
       case ast[0]
       when :"="
@@ -156,7 +159,7 @@ class Compiler
 
   def new_vreg()
     @vreg_count += 1
-    "~#{@vreg_count}".to_sym
+    VReg.new("~#{@vreg_count}".to_sym, nil)
   end
 end
 
