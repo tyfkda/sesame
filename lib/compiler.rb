@@ -42,14 +42,14 @@ class Compiler
   end
 
   def gen_if(ast)
-    tbb = bb_split(@curbb)
+    tbb = bb_split()
     fbb = bb_split(tbb)
     gen_cond_jmp(ast[1], false, fbb)
     set_curbb(tbb)
     gen_stmt(ast[2])
     if ast[3]
       nbb = bb_split(fbb)
-      @curbb.irs.push(IR::jmp(nil, nbb.index))
+      @curbb.irs.push(IR::jmp(nil, nbb))
       set_curbb(fbb)
       gen_stmt(ast[3])
       set_curbb(nbb)
@@ -59,33 +59,27 @@ class Compiler
   end
 
   def gen_while(ast)
-    loop_bb = bb_split(@curbb)
-    cond_bb = bb_split(loop_bb)
-    next_bb = bb_split(cond_bb)
-
-    @curbb.irs.push(IR::jmp(nil, cond_bb.index))
-    set_curbb(loop_bb)
-    gen_stmt(ast[2])
+    cond_bb = bb_split()
+    body_bb = bb_split(cond_bb)
+    next_bb = bb_split(body_bb)
 
     set_curbb(cond_bb)
-    gen_cond_jmp(ast[1], true, loop_bb)
+    gen_cond_jmp(ast[1], false, next_bb)
+
+    set_curbb(body_bb)
+    gen_stmt(ast[2])
+    @curbb.irs.push(IR::jmp(nil, cond_bb))
 
     set_curbb(next_bb)
   end
 
   def gen_cond_jmp(ast, tf, bb)
-    assert(ast[0] == :expr)
-    cond = ast[1]
+    cond = ast
     case cond[0]
-    when :bop
-      case cond[1]
-      when :==, :<, :<=, :>, :>=
-        ck = tf ? cond[1] : flip_cond(cond[1])
-        ck = gen_compare_expr(ck, cond[2], cond[3])
-        @curbb.irs.push(IR::jmp(ck, bb.index))
-      else
-        error("Unhandled gen_cond_jmp: #{ast.inspect}")
-      end
+    when :==, :!=, :<, :<=, :>, :>=
+      ck = tf ? cond[0] : flip_cond(cond[0])
+      ck = gen_compare_expr(ck, cond[1], cond[2])
+      @curbb.irs.push(IR::jmp(ck, bb))
     else
       error("Unhandled gen_cond_jmp: #{ast.inspect}")
     end
@@ -104,7 +98,7 @@ class Compiler
     BB::new(index)
   end
 
-  def bb_split(bb)
+  def bb_split(bb = @curbb)
     cc = bb_new()
     cc.next_bb = bb.next_bb
     bb.next_bb = cc
@@ -127,43 +121,36 @@ class Compiler
       ast
     when Array
       case ast[0]
-      when :expr
-        gen_expr(ast[1])
-      when :bop
-        gen_bop(ast)
+      when :"="
+        dst = gen_expr(ast[1])
+        src = gen_expr(ast[2])
+        @curbb.irs.push(IR::mov(dst, src))
+        dst
+      when :+, :-, :*, :/, :%
+        lhs = gen_expr(ast[1])
+        rhs = gen_expr(ast[2])
+        dst = new_vreg()
+        case ast[0]
+        when :+
+          kind = :ADD
+        when :-
+          kind = :SUB
+        when :*
+          kind = :MUL
+        when :/
+          kind = :DIV
+        when :%
+          kind = :MOD
+        end
+        @curbb.irs.push(IR::bop(kind, dst, lhs, rhs))
+        dst
+      when :-@  # Negate
+        gen_expr([:-, 0, ast[1]])
       else
         error("Unhandled gen_expr: #{ast.inspect}")
       end
     else
       error("Unhandled gen_expr: #{ast.inspect}")
-    end
-  end
-
-  def gen_bop(ast)
-    case ast[1]
-    when :"="
-      dst = gen_expr(ast[2])
-      src = gen_expr(ast[3])
-      @curbb.irs.push(IR::mov(dst, src))
-      dst
-    when :+, :-, :*, :/
-      lhs = gen_expr(ast[2])
-      rhs = gen_expr(ast[3])
-      dst = new_vreg()
-      case ast[1]
-      when :+
-        kind = :ADD
-      when :-
-        kind = :SUB
-      when :*
-        kind = :MUL
-      when :/
-        kind = :DIV
-      end
-      @curbb.irs.push(IR::bop(kind, dst, lhs, rhs))
-      dst
-    else
-      error("Unhandled gen_bop: #{ast.inspect}")
     end
   end
 

@@ -26,7 +26,7 @@ class Object
 end
 
 class IR
-  attr_accessor :op, :dst, :opr1, :opr2, :cond, :regs
+  attr_accessor :op, :dst, :opr1, :opr2, :cond, :bb, :regs
 
   def self.nop()
     IR.new(:NOP)
@@ -44,8 +44,8 @@ class IR
     IR.new(:CMP, nil, opr1, opr2)
   end
 
-  def self.jmp(cond, bbno)
-    IR.new(:JMP, nil, bbno, cond: cond)
+  def self.jmp(cond, bb)
+    IR.new(:JMP, cond: cond, bb: bb)
   end
 
   def self.ret(opr1)
@@ -56,12 +56,13 @@ class IR
     IR.new(:PHI, dst, regs: regs)
   end
 
-  def initialize(op, dst = nil, opr1 = nil, opr2 = nil, cond: nil, regs: nil)
+  def initialize(op, dst = nil, opr1 = nil, opr2 = nil, cond: nil, bb: nil, regs: nil)
     @op = op
     @dst = dst
     @opr1 = opr1
     @opr2 = opr2
     @cond = cond
+    @bb = bb
     @regs = regs
   end
 
@@ -77,7 +78,7 @@ class IR
   def sorted_operands()
     order = [@opr1, @opr2]
     case @op
-    when :ADD, :SUB, :MUL, :DIV
+    when :ADD, :SUB, :MUL, :DIV, :MOD
       order.sort! do |a, b|
         if a.genreg? != b.genreg?
           a.genreg? ? -1 : 1
@@ -100,7 +101,7 @@ class IR
   def inspect
     case @op
     when :JMP
-      "J#{@cond || 'MP'}  #{@opr1}"
+      "J#{@cond || 'MP'}  #{@bb.index}"
     when :PHI
       "PHI  #{@dst.inspect} <= #{@regs}"
     else
@@ -128,16 +129,16 @@ class BB
     @from_bbs = []
   end
 
-  def set_next(next_index)
+  def set_next()
     to_bbs = []
-    to_bbs.push(next_index) if next_index
+    to_bbs.push(@next_bb) if @next_bb
     unless irs.empty?
       last = irs.last
       if last.op == :JMP
         unless last.cond
           to_bbs.clear()
         end
-        to_bbs.push(last.opr1)
+        to_bbs.push(last.bb)
       end
     end
     @to_bbs = to_bbs
@@ -164,8 +165,12 @@ class BB
     @irs.insert(pos, *phis)
   end
 
+  def inspect()
+    "BB\##{@index}"
+  end
+
   def dump()
-    puts "### BB #{@index}: to=#{@to_bbs.inspect}, from=#{@from_bbs.inspect}, in=#{@in_regs.inspect}, out=#{@out_regs.inspect}"
+    puts "### BB #{@index}: to=#{@to_bbs.map{|b| b.index}.inspect}, from=#{@from_bbs.map{|b| b.index}.inspect}, in=#{@in_regs.inspect}, out=#{@out_regs.inspect}"
     #puts "assign=#{@assigned_regs.inspect}"
 
     @irs.each do |ir|
@@ -192,10 +197,10 @@ class BBContainer
   end
 
   def analyze_flow()
-    @bbs.each_with_index do |bb, ib|
-      bb.set_next(ib + 1 < @bbs.length ? ib + 1 : nil)
+    @bbs.each do |bb|
+      bb.set_next()
       bb.to_bbs.each do |nb|
-        @bbs[nb].from_bbs.push(ib)
+        nb.from_bbs.push(bb)
       end
 
       bb.irs.each do |ir|
@@ -216,8 +221,8 @@ class BBContainer
     loop do
       cont = false
       @bbs.each do |bb|
-        bb.to_bbs.each do |ni|
-          in_regs = @bbs[ni].in_regs
+        bb.to_bbs.each do |tobb|
+          in_regs = tobb.in_regs
           in_regs.keys.each do |sym|
             unless bb.out_regs.has_key?(sym)
               bb.out_regs[sym] = nil
@@ -272,7 +277,7 @@ class BBContainer
     @bbs.each do |bb|
       bb.irs.each do |ir|
         if !bb.in_regs.empty? && bb.from_bbs.length == 1
-          from_bb = @bbs[bb.from_bbs.first]
+          from_bb = bb.from_bbs.first
           bb.in_regs.keys.each do |sym|
             src_gen = from_bb.out_regs[sym]
             dst_gen = bb.in_regs[sym]
@@ -298,7 +303,7 @@ class BBContainer
             @const_regs[ir.dst] = ir.opr1
             ir.clear()
           end
-        when :ADD, :SUB, :MUL, :DIV
+        when :ADD, :SUB, :MUL, :DIV, :MOD
           key = [ir.op, *ir.sorted_operands()]
           if @computed.has_key?(key)
             @const_regs[ir.dst] = @computed[key].dst
@@ -313,6 +318,8 @@ class BBContainer
               value = ir.opr1 * ir.opr2
             when :DIV
               value = ir.opr1 / ir.opr2
+            when :MOD
+              value = ir.opr1 % ir.opr2
             else
               error("Unhandled: #{ir}")
             end
@@ -329,9 +336,8 @@ class BBContainer
 
   def resolve_phi()
     @bbs.each do |bb|
-      bb.from_bbs.each do |from|
+      bb.from_bbs.each do |from_bb|
         left_in_regs = bb.in_regs.keys
-        from_bb = @bbs[from]
         from_bb.irs.each do |ir|
           if ir.dst && bb.in_regs.has_key?(ir.dst.sym)
             sym = ir.dst.sym

@@ -3,16 +3,16 @@ class VM
     @regs = {}
     @flag = 0
 
-    ib = 0
+    bb = bbs[0]
     ip = 0
 
     loop do
-      while ip >= bbs[ib].length
+      while ip >= bb.length
         ip = 0
-        ib += 1
-        return nil if ib >= bbs.length
+        bb = bb.next_bb
+        return nil unless bb
       end
-      ir = bbs[ib][ip]
+      ir = bb[ip]
       ip += 1
 
       case ir.op
@@ -33,12 +33,19 @@ class VM
       when :DIV
         dst = ir.dst
         @regs[dst] = value(ir.opr1) / value(ir.opr2)
+      when :MOD
+        dst = ir.dst
+        @regs[dst] = value(ir.opr1) % value(ir.opr2)
       when :CMP
         @flag = value(ir.opr1) - value(ir.opr2)
       when :JMP
         jmp = case ir.cond
           when nil
             true
+          when :==
+            @flag == 0
+          when :!=
+            @flag != 0
           when :<
             @flag < 0
           when :<=
@@ -51,7 +58,7 @@ class VM
             error("Unhandled cond: #{ir.cond.inspect}")
         end
         if jmp
-          ib = ir.opr1
+          bb = ir.bb
           ip = 0
         end
       when :RET
