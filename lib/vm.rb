@@ -82,19 +82,29 @@ class VM
   end
 
   def set_call(funcname, args)
-    @callstack.push([@bbs, @bb, @ip, @regs])
-    func = @env[funcname]
-    params = func[0]
-    bbcon = func[1]
-    @bbs = bbcon.bbs
-    @bb = @bbs[0]
-    @ip = 0
-
-    new_regs = {}
-    params.each_with_index do |sym, i|
-      new_regs[sym] = value(args[i])
+    unless @env.has_key?(funcname)
+      error("`#{funcname}' not exist")
     end
-    @regs = new_regs
+    func = @env[funcname]
+    if func.is_a?(Proc)
+      args = args.map {|arg| value(arg)}
+      result = func.call(*args)
+      call_ir = @bb[@ip - 1]
+      @regs[call_ir.dst] = result
+    else
+      @callstack.push([@bbs, @bb, @ip, @regs])
+      params = func[0]
+      bbcon = func[1]
+      @bbs = bbcon.bbs
+      @bb = @bbs[0]
+      @ip = 0
+
+      new_regs = {}
+      params.each_with_index do |sym, i|
+        new_regs[sym] = value(args[i])
+      end
+      @regs = new_regs
+    end
   end
 
   def set_ret(result)

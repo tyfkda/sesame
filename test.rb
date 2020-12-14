@@ -1,12 +1,18 @@
 require 'stringio'
 require './lib/compiler'
 require './lib/vm'
+require './runtime'
 
 def try(title, expected, input)
   print "#{title} => "
   sio = StringIO.new(input)
 
-  global = {}
+  global = {
+    array_new: ->(n) { array_new(n) },
+    array_get: ->(array, i) { array_get(array, i) },
+    array_set: ->(array, i, value) { array_set(array, i, value) },
+    puts: ->(x) { puts(x) },
+  }
   compiler = Compiler.new(global, [])
   compiler.compile(sio)
 
@@ -71,3 +77,13 @@ try 'funcall', 987, "
     return x
   end
   return foo(987)"
+
+try 'recursive', 55, "
+  def fib(n)
+    if n < 2
+      return n
+    else
+      return fib(n - 1) + fib(n - 2)
+    end
+  end
+  return fib(10)"
