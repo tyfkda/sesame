@@ -11,15 +11,22 @@ def main()
   params = {}
   opt.parse!(ARGV, into: params)
 
-  compiler = Compiler.new()
-  bbcon = compiler.compile(ARGF)
+  global = {}
+  compiler = Compiler.new(global, [])
+  compiler.compile(ARGF)
+
   if params[:"dump-ir"]
-    bbcon.dump()
+    global.each do |k, v|
+      puts "=== #{k} #{v[0].inspect}"
+      v[1].dump()
+      puts ""
+    end
+    compiler.bbcon.dump()
     return
   end
 
-  vm = VM.new()
-  result = vm.run(bbcon.bbs)
+  vm = VM.new(global, compiler.bbcon.bbs)
+  result = vm.run()
   p result
 end
 

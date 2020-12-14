@@ -33,6 +33,12 @@ def simplify_expr(expr)
   when :unary
     [expr[1],
       simplify_expr(expr[2])]
+  when :method_add_arg
+    assert(expr[1].first == :fcall && expr[1][1].first == :@ident &&
+      expr[2].first == :arg_paren)
+    args = expr[2][1]&.first == :args_add_block ? expr[2][1][1].map {|arg| simplify_expr(arg)} : []
+    [:funcall, expr[1][1][1].intern,
+      args]
   else
     error("Unhandled expr: #{expr.inspect}")
   end
@@ -43,6 +49,19 @@ def simplify_stmt(stmt)
   when Array
     [:block,
       *stmt.map {|s| simplify_stmt(s)}]
+  when :def
+    if stmt[1].first == :@ident &&
+        stmt[2].first == :paren && stmt[2][1].first == :params &&
+        stmt[3].first == :bodystmt
+      params = stmt[2][1][1] ? stmt[2][1][1].map {|param| assert(param[0] == :@ident); param[1].intern} : []
+      [:defun, stmt[1][1].intern, params,
+        simplify_stmt(stmt[3][1])]
+    else
+      error("Malformed defun: #{stmt.inspect}")
+    end
+  when :method_add_arg
+    [:expr,
+      simplify_expr(stmt)]
   when :assign
     [:expr,
       [:"=",

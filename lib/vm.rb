@@ -1,19 +1,24 @@
 class VM
-  def run(bbs)
+  def initialize(env, bbs)
+    @env = env
     @regs = {}
     @flag = 0
+    @bbs = bbs
+    @callstack = []
 
-    bb = bbs[0]
-    ip = 0
+    @bb = @bbs[0]
+    @ip = 0
+  end
 
+  def run()
     loop do
-      while ip >= bb.length
-        ip = 0
-        bb = bb.next_bb
-        return nil unless bb
+      while @ip >= @bb.length
+        @ip = 0
+        @bb = @bb.next_bb
+        return unless @bb
       end
-      ir = bb[ip]
-      ip += 1
+      ir = @bb[@ip]
+      @ip += 1
 
       case ir.op
       when :NOP
@@ -58,16 +63,44 @@ class VM
             error("Unhandled cond: #{ir.cond.inspect}")
         end
         if jmp
-          bb = ir.bb
-          ip = 0
+          @bb = ir.bb
+          @ip = 0
         end
       when :RET
-        return value(ir.opr1)
+        result = value(ir.opr1)
+        if @callstack.empty?
+          return result
+        end
+        set_ret(result)
+      when :CALL
+        set_call(ir.funcname, ir.args)
       else
-        $stderr.puts "Unknown: #{ir.inspect}"
+        $stderr.puts "Unknown op: #{ir.inspect}"
         exit 1
       end
     end
+  end
+
+  def set_call(funcname, args)
+    @callstack.push([@bbs, @bb, @ip, @regs])
+    func = @env[funcname]
+    params = func[0]
+    bbcon = func[1]
+    @bbs = bbcon.bbs
+    @bb = @bbs[0]
+    @ip = 0
+
+    new_regs = {}
+    params.each_with_index do |sym, i|
+      new_regs[sym] = value(args[i])
+    end
+    @regs = new_regs
+  end
+
+  def set_ret(result)
+    @bbs, @bb, @ip, @regs = @callstack.pop()
+    call_ir = @bb[@ip - 1]
+    @regs[call_ir.dst] = result
   end
 
   def value(v)
@@ -76,5 +109,12 @@ class VM
     else
       @regs[v]
     end
+  end
+
+  def set_funcall(func)
+    params = func[0]
+    body = func[1]
+    # TODO: Set arguments
+    run(body)
   end
 end

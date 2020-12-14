@@ -2,21 +2,31 @@ require_relative './parser'
 require_relative './ir'
 
 class Compiler
-  def initialize
+  attr_reader :bbcon
+
+  def initialize(env, params)
+    @env = env
     @bbs = []
     @bbindex = 0
     @vars = {}
     @vreg_count = 0
+
+    params.map! do |sym|
+      @vars[sym] = VReg.new(sym, nil)
+    end
+
+    @bbcon = BBContainer.new(params, @bbs)
     set_curbb(bb_new())
   end
 
   def compile(file)
     toplevel = parse(file)
-    gen(toplevel)
+    compile_ast(toplevel)
+  end
 
-    bbcon = BBContainer.new(@bbs)
-    bbcon.analyze()
-    bbcon
+  def compile_ast(ast)
+    gen(ast)
+    @bbcon.analyze()
   end
 
   def gen(ast)
@@ -25,6 +35,8 @@ class Compiler
 
   def gen_stmt(ast)
     case ast[0]
+    when :defun
+      gen_defun(ast)
     when :block
       ast.slice(1..).map do |sub|
         gen(sub)
@@ -40,6 +52,22 @@ class Compiler
     else
       error("Unhandled gen: #{ast.inspect}")
     end
+  end
+
+  def gen_defun(ast)
+    funcname = ast[1]
+    params = ast[2]
+    subcompiler = Compiler.new(@env, params)
+    subcompiler.compile_ast(ast[3])
+    register_global(funcname, gen_func(subcompiler))
+  end
+
+  def gen_func(subcompiler)
+    [subcompiler.bbcon.params, subcompiler.bbcon]
+  end
+
+  def register_global(symbol, value)
+    @env[symbol] = value
   end
 
   def gen_if(ast)
@@ -149,6 +177,11 @@ class Compiler
         dst
       when :-@  # Negate
         gen_expr([:-, 0, ast[1]])
+      when :funcall
+        args = ast[2].map {|v| gen_expr(v)}
+        dst = new_vreg()
+        @curbb.irs.push(IR::call(dst, ast[1], args))
+        dst
       else
         error("Unhandled gen_expr: #{ast.inspect}")
       end

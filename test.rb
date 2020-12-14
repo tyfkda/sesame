@@ -6,11 +6,12 @@ def try(title, expected, input)
   print "#{title} => "
   sio = StringIO.new(input)
 
-  compiler = Compiler.new()
-  bbcon = compiler.compile(sio)
+  global = {}
+  compiler = Compiler.new(global, [])
+  compiler.compile(sio)
 
-  vm = VM.new()
-  actual = vm.run(bbcon.bbs)
+  vm = VM.new(global, compiler.bbcon.bbs)
+  actual = vm.run()
 
   if actual == expected
     puts 'OK'
@@ -64,3 +65,9 @@ try 'while', 55, "
     i = i + 1
   end
   return acc"
+
+try 'funcall', 987, "
+  def foo(x)
+    return x
+  end
+  return foo(987)"

@@ -41,7 +41,7 @@ class Object
 end
 
 class IR
-  attr_accessor :op, :dst, :opr1, :opr2, :cond, :bb, :regs
+  attr_accessor :op, :dst, :opr1, :opr2, :cond, :bb, :regs, :funcname, :args
 
   def self.nop()
     IR.new(:NOP)
@@ -67,11 +67,15 @@ class IR
     IR.new(:RET, nil, opr1)
   end
 
+  def self.call(dst, funcname, args)
+    IR.new(:CALL, dst, funcname: funcname, args: args)
+  end
+
   def self.phi(dst, regs)
     IR.new(:PHI, dst, regs: regs)
   end
 
-  def initialize(op, dst = nil, opr1 = nil, opr2 = nil, cond: nil, bb: nil, regs: nil)
+  def initialize(op, dst = nil, opr1 = nil, opr2 = nil, cond: nil, bb: nil, regs: nil, funcname: nil, args: nil)
     @op = op
     @dst = dst
     @opr1 = opr1
@@ -79,6 +83,8 @@ class IR
     @cond = cond
     @bb = bb
     @regs = regs
+    @funcname = funcname
+    @args = args
   end
 
   def clear()
@@ -117,6 +123,8 @@ class IR
     case @op
     when :JMP
       "J#{@cond || 'MP'}  #{@bb.index}"
+    when :CALL
+      "CALL  #{@dst.inspect} <= #{@funcname} [#{@args.map {|arg| arg.inspect}.join(', ')}]"
     when :PHI
       "PHI  #{@dst.inspect} <= #{@regs}"
     else
@@ -186,10 +194,10 @@ class BB
 
   def dump()
     puts "### BB #{@index}: " + [
-      to_bbs && "to=#{@to_bbs.map{|b| b.index}.inspect}",
-      from_bbs && "from=#{@from_bbs.map{|b| b.index}.inspect}",
-      in_regs && "in=#{@in_regs.inspect}",
-      out_regs && "out=#{@out_regs.inspect}",
+      @to_bbs && "to=#{@to_bbs.map{|b| b.index}.inspect}",
+      @from_bbs && "from=#{@from_bbs.map{|b| b.index}.inspect}",
+      @in_regs && "in=#{@in_regs.inspect}",
+      @out_regs && "out=#{@out_regs.inspect}",
     ].select {|s| s}.join(', ')
 
     @irs.each do |ir|
@@ -199,12 +207,18 @@ class BB
 end
 
 class BBContainer
-  attr_accessor :bbs
+  attr_accessor :bbs, :params
 
-  def initialize(bbs)
+  def initialize(params, bbs)
+    @params = params
     @bbs = bbs
     @const_regs = {}
     @computed = {}
+
+    @vregs = Hash.new {|h, k| h[k] = []}
+    @params.each do |vreg|
+      @vregs[vreg.sym].push(vreg)
+    end
   end
 
   def analyze()
@@ -213,9 +227,24 @@ class BBContainer
     propagate_const()
     resolve_phi()
     trim()
+
+    unless @bbs.empty?
+      bb0 = @bbs.first
+      @params.map! do |vreg|
+        @vregs[vreg.sym][bb0.in_regs[vreg.sym]]
+      end
+    end
   end
 
   def analyze_flow()
+    unless @bbs.empty?
+      bb0 = @bbs.first
+      @params.each do |vreg|
+        bb0.in_regs[vreg.sym] = 0
+        vreg = @vregs[vreg.sym][0]
+      end
+    end
+
     @bbs.each do |bb|
       bb.set_next()
       bb.to_bbs.each do |nb|
@@ -223,7 +252,9 @@ class BBContainer
       end
 
       bb.irs.each do |ir|
-        vregs = [ir.opr1, ir.opr2].filter {|x| x&.not_const?}
+        vregs = [ir.opr1, ir.opr2]
+        vregs.concat(ir.args) if ir.args
+        vregs.filter! {|x| x&.not_const?}
         vregs.each do |vreg|
           unless bb.in_regs.has_key?(vreg.sym) || bb.assigned_regs.has_key?(vreg.sym)
             bb.in_regs[vreg.sym] = nil
@@ -259,40 +290,41 @@ class BBContainer
   end
 
   def make_ssa()
-    reg_gens = Hash.new()
-    @gen_regs = Hash.new {|h, k| h[k] = []}
-
     @bbs.each do |bb|
       bb.in_regs.keys.each do |sym|
-        gen = reg_gens[sym] += 1
+        gen = @vregs[sym].length
         bb.in_regs[sym] = gen
-        @gen_regs[sym].push(VReg.new(sym, gen))
+        @vregs[sym].push(VReg.new(sym, gen))
       end
 
       bb.irs.each do |ir|
         if ir.opr1&.not_const?
-          ir.opr1 = @gen_regs[ir.opr1.sym][reg_gens[ir.opr1.sym]]
+          ir.opr1 = @vregs[ir.opr1.sym][@vregs[ir.opr1.sym].length - 1]
         end
         if ir.opr2&.not_const?
-          ir.opr2 = @gen_regs[ir.opr2.sym][reg_gens[ir.opr2.sym]]
+          ir.opr2 = @vregs[ir.opr2.sym][@vregs[ir.opr2.sym].length - 1]
+        end
+        if ir.args
+          ir.args.map! do |arg|
+            arg.const? ? arg : @vregs[arg.sym][@vregs[arg.sym].length - 1]
+          end
         end
         if ir.dst
           vreg = ir.dst
           sym = vreg.sym
-          if reg_gens.has_key?(sym)
-            gen = reg_gens[sym] + 1
+          if @vregs.has_key?(sym)
+            gen = @vregs[sym].length
             vreg = VReg.new(sym, gen)
             ir.dst = vreg
           else
             vreg.gen = gen = 0
           end
-          reg_gens[sym] = gen
-          @gen_regs[sym].push(vreg)
+          @vregs[sym].push(vreg)
         end
       end
 
       bb.out_regs.keys.each do |vreg|
-        bb.out_regs[vreg] = reg_gens[vreg]
+        bb.out_regs[vreg] = @vregs[vreg].length - 1
       end
     end
   end
@@ -308,8 +340,8 @@ class BBContainer
             src_gen = from_bb.out_regs[sym]
             dst_gen = bb.in_regs[sym]
             if src_gen != dst_gen
-              src_reg = @gen_regs[sym][src_gen]
-              dst_reg = @gen_regs[sym][dst_gen]
+              src_reg = @vregs[sym][src_gen]
+              dst_reg = @vregs[sym][dst_gen]
               @const_regs[dst_reg] = @const_regs[src_reg] || src_reg
 
               bb.in_regs[sym] = src_gen
@@ -318,8 +350,17 @@ class BBContainer
         end
 
         slots.each do |slot|
-          if ir[slot]&.not_const? && @const_regs.has_key?(ir[slot])
-            ir[slot] = @const_regs[ir[slot]]
+          opr = ir[slot]
+          if opr&.not_const? && @const_regs.has_key?(opr)
+            ir[slot] = @const_regs[opr]
+          end
+        end
+        if ir.args
+          ir.args.length.times do |i|
+            arg = ir.args[i]
+            if arg.not_const? && @const_regs.has_key?(arg)
+              ir.args[i] = @const_regs[arg]
+            end
           end
         end
 
@@ -365,16 +406,16 @@ class BBContainer
         from_bb.irs.each do |ir|
           if ir.dst && bb.in_regs.has_key?(ir.dst.sym)
             sym = ir.dst.sym
-            dst_reg = @gen_regs[sym][bb.in_regs[sym]]
+            dst_reg = @vregs[sym][bb.in_regs[sym]]
             ir.dst = dst_reg
             left_in_regs.delete(sym)
           end
         end
         movs = left_in_regs.map do |sym|
           next unless bb.in_regs[sym]
-          dst_reg = @gen_regs[sym][bb.in_regs[sym]]
+          dst_reg = @vregs[sym][bb.in_regs[sym]]
           src_gen = from_bb.out_regs[sym]
-          src_reg = @gen_regs[sym][src_gen]
+          src_reg = @vregs[sym][src_gen]
           val = @const_regs[src_reg] || src_reg
           dst_reg != src_reg ? IR::mov(dst_reg, val) : IR::nop()
         end.select {|ir| ir && !ir.nop?}
