@@ -88,7 +88,7 @@ class IR
 
   def clear()
     @op = :NOP
-    @dst = @opr1 = @opr2 = nil
+    @dst = @opr1 = @opr2 = @cond = @bb = @funcname = @args = nil
   end
 
   def nop?()
@@ -178,13 +178,32 @@ class BB
     @irs.delete_at(key)
   end
 
-  def insert_phis(phis)
-    return if @irs.empty?
+  def insert_phi_resolver(dst_reg, src_reg)
+    ir = @irs.find {|ir| ir.dst == src_reg}
+    if ir
+      ir.dst = dst_reg
+      return true
+    end
+
     pos = @irs.length
-    if @irs[pos - 1].op == :JMP
+    if pos > 0 && @irs[pos - 1].op == :JMP
       pos -= 1
     end
-    @irs.insert(pos, *phis)
+    @irs.insert(pos, IR::mov(dst_reg, src_reg))
+    return false
+  end
+
+  def replace_reg(src_reg, dst_reg)
+    @irs.each do |ir|
+      ir.dst = dst_reg if ir.dst == src_reg
+      ir.opr1 = dst_reg if ir.opr1 == src_reg
+      ir.opr2 = dst_reg if ir.opr2 == src_reg
+      if ir.args
+        ir.args.length.times do |i|
+          ir.args[i] = dst_reg if ir.args[i] == src_reg
+        end
+      end
+    end
   end
 
   def inspect()
@@ -224,6 +243,7 @@ class BBContainer
     analyze_flow()
     make_ssa()
     propagate_const()
+    remove_dead_expr()
     resolve_phi()
     trim()
 
@@ -344,98 +364,131 @@ class BBContainer
   def propagate_const()
     slots = [:opr1, :opr2]
 
-    @bbs.each do |bb|
-      bb.irs.each do |ir|
-        if !bb.in_regs.empty? && bb.from_bbs.length == 1
-          from_bb = bb.from_bbs.first
-          bb.in_regs.keys.each do |sym|
-            src_gen = from_bb.out_regs[sym]
-            dst_gen = bb.in_regs[sym]
-            if src_gen != dst_gen
-              src_reg = @vregs[sym][src_gen]
-              dst_reg = @vregs[sym][dst_gen]
-              @const_regs[dst_reg] = @const_regs[src_reg] || src_reg
+    2.times do  # To apply @const_regs backward.
+      @bbs.each do |bb|
+        bb.irs.each do |ir|
+          if !bb.in_regs.empty? && bb.from_bbs.length == 1
+            from_bb = bb.from_bbs.first
+            bb.in_regs.keys.each do |sym|
+              src_gen = from_bb.out_regs[sym]
+              dst_gen = bb.in_regs[sym]
+              if src_gen != dst_gen
+                src_reg = @vregs[sym][src_gen]
+                dst_reg = @vregs[sym][dst_gen]
+                @const_regs[dst_reg] = @const_regs[src_reg] || src_reg
 
-              bb.in_regs[sym] = src_gen
+                bb.in_regs[sym] = src_gen
+              end
             end
           end
-        end
 
-        slots.each do |slot|
-          opr = ir[slot]
-          if opr&.not_const? && @const_regs.has_key?(opr)
-            ir[slot] = @const_regs[opr]
-          end
-        end
-        if ir.args
-          ir.args.length.times do |i|
-            arg = ir.args[i]
-            if arg.not_const? && @const_regs.has_key?(arg)
-              ir.args[i] = @const_regs[arg]
+          slots.each do |slot|
+            opr = ir[slot]
+            if opr&.not_const? && @const_regs.has_key?(opr)
+              ir[slot] = @const_regs[opr]
             end
           end
-        end
+          if ir.args
+            ir.args.length.times do |i|
+              arg = ir.args[i]
+              if arg.not_const? && @const_regs.has_key?(arg)
+                ir.args[i] = @const_regs[arg]
+              end
+            end
+          end
 
-        case ir.op
-        when :MOV
-          @const_regs[ir.dst] = ir.opr1
-          ir.clear()
-        when :ADD, :SUB, :MUL, :DIV, :MOD
-          key = [ir.op, *ir.sorted_operands()]
-          if @computed.has_key?(key)
-            @const_regs[ir.dst] = @computed[key].dst
+          case ir.op
+          when :MOV
+            @const_regs[ir.dst] = ir.opr1
             ir.clear()
-          elsif ir.opr1.const? && ir.opr2.const?
-            case ir.op
-            when :ADD
-              value = ir.opr1.value + ir.opr2.value
-            when :SUB
-              value = ir.opr1.value - ir.opr2.value
-            when :MUL
-              value = ir.opr1.value * ir.opr2.value
-            when :DIV
-              value = ir.opr1.value / ir.opr2.value
-            when :MOD
-              value = ir.opr1.value % ir.opr2.value
-            else
-              error("Unhandled: #{ir}")
-            end
-            @const_regs[ir.dst] = VReg::const(value)
-            ir.clear()
-          else
+          when :ADD, :SUB, :MUL, :DIV, :MOD
             key = [ir.op, *ir.sorted_operands()]
-            @computed[key] = ir
+            if @computed.has_key?(key) && @computed[key].dst != ir.dst
+              @const_regs[ir.dst] = @computed[key].dst
+              ir.clear()
+            elsif ir.opr1.const? && ir.opr2.const?
+              case ir.op
+              when :ADD
+                value = ir.opr1.value + ir.opr2.value
+              when :SUB
+                value = ir.opr1.value - ir.opr2.value
+              when :MUL
+                value = ir.opr1.value * ir.opr2.value
+              when :DIV
+                value = ir.opr1.value / ir.opr2.value
+              when :MOD
+                value = ir.opr1.value % ir.opr2.value
+              else
+                error("Unhandled: #{ir}")
+              end
+              @const_regs[ir.dst] = VReg::const(value)
+              ir.clear()
+            else
+              key = [ir.op, *ir.sorted_operands()]
+              @computed[key] = ir
+            end
           end
         end
       end
     end
   end
 
+  def remove_dead_expr()
+    loop do
+      again = false
+      @const_regs.keys.each do |vreg|
+        next if register_used?(vreg)
+        @const_regs.delete(vreg)
+      end
+
+      @bbs.each do |bb|
+        bb.irs.each do |ir|
+          dst = ir.dst
+          next unless dst
+          next if register_used?(dst)
+
+          if ir.op == :CALL
+            ir.dst = nil
+          else
+            ir.clear()
+          end
+          if @const_regs.has_key?(dst)
+            @const_regs.delete(dst)
+          end
+          again = true
+        end
+      end
+      break unless again
+    end
+  end
+
+  def register_used?(vreg)
+    return true if @const_regs.has_value?(vreg)
+
+    @bbs.each do |bb|
+      bb.irs.each do |ir|
+        if ir.opr1&.eql?(vreg) || ir.opr2&.eql?(vreg) || ir&.args&.any? {|arg| arg.eql?(vreg)}
+          return true
+        end
+      end
+    end
+    false
+  end
+
   def resolve_phi()
     @bbs.each do |bb|
       while !bb.irs.empty? && bb.irs.first.op == :PHI
-        bb.irs.shift
-      end
-
-      bb.from_bbs.each do |from_bb|
-        left_in_regs = bb.in_regs.keys
-        from_bb.irs.each do |ir|
-          if ir.op != :PHI && ir.dst && bb.in_regs.has_key?(ir.dst.sym)
-            sym = ir.dst.sym
-            dst_reg = @vregs[sym][bb.in_regs[sym]]
-            ir.dst = dst_reg
-            left_in_regs.delete(sym)
+        ir = bb.irs.shift
+        dst_reg = ir.dst
+        bb.from_bbs.each_with_index do |from_bb, ifb|
+          src_reg = ir.args[ifb]
+          if src_reg != dst_reg
+            if from_bb.insert_phi_resolver(dst_reg, src_reg)
+              # src is replaced to dst.
+              from_bb.replace_reg(src_reg, dst_reg)
+            end
           end
         end
-        movs = left_in_regs.map do |sym|
-          next unless bb.in_regs[sym]
-          dst_reg = @vregs[sym][bb.in_regs[sym]]
-          src_gen = from_bb.out_regs[sym]
-          src_reg = @vregs[sym][src_gen]
-          val = @const_regs[src_reg] || src_reg
-          dst_reg != src_reg ? IR::mov(dst_reg, val) : IR::nop()
-        end.select {|ir| ir && !ir.nop?}
-        from_bb.insert_phis(movs)
       end
     end
   end
