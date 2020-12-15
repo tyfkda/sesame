@@ -63,8 +63,12 @@ class IR
     IR.new(:JMP, cond: cond, bb: bb)
   end
 
-  def self.ret(opr1)
-    IR.new(:RET, nil, opr1)
+  def self.result(opr1)
+    IR.new(:RESULT, nil, opr1)
+  end
+
+  def self.ret()
+    IR.new(:RET)
   end
 
   def self.call(dst, funcname, args)

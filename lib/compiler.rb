@@ -17,6 +17,7 @@ class Compiler
 
     @bbcon = BBContainer.new(params, @bbs)
     set_curbb(bb_new())
+    @ret_bb = bb_split()
   end
 
   def compile(file)
@@ -26,6 +27,9 @@ class Compiler
 
   def compile_ast(ast)
     gen(ast)
+    set_curbb(@ret_bb)
+    @curbb.irs.push(IR::ret())
+
     @bbcon.analyze()
   end
 
@@ -135,8 +139,11 @@ class Compiler
   end
 
   def gen_return(ast)
+    after = bb_split()
     val = ast[1] && gen_expr(ast[1])
-    @curbb.irs.push(IR::ret(val))
+    @curbb.irs.push(IR::result(val))
+    @curbb.irs.push(IR::jmp(nil, @ret_bb))
+    set_curbb(after)
   end
 
   def set_curbb(bb)
