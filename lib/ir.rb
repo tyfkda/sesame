@@ -41,7 +41,7 @@ class Object
 end
 
 class IR
-  attr_accessor :op, :dst, :opr1, :opr2, :cond, :bb, :regs, :funcname, :args
+  attr_accessor :op, :dst, :opr1, :opr2, :cond, :bb, :funcname, :args
 
   def self.nop()
     IR.new(:NOP)
@@ -72,17 +72,16 @@ class IR
   end
 
   def self.phi(dst, regs)
-    IR.new(:PHI, dst, regs: regs)
+    IR.new(:PHI, dst, args: regs)
   end
 
-  def initialize(op, dst = nil, opr1 = nil, opr2 = nil, cond: nil, bb: nil, regs: nil, funcname: nil, args: nil)
+  def initialize(op, dst = nil, opr1 = nil, opr2 = nil, cond: nil, bb: nil, funcname: nil, args: nil)
     @op = op
     @dst = dst
     @opr1 = opr1
     @opr2 = opr2
     @cond = cond
     @bb = bb
-    @regs = regs
     @funcname = funcname
     @args = args
   end
@@ -126,7 +125,7 @@ class IR
     when :CALL
       "CALL  #{@dst.inspect} <= #{@funcname} [#{@args.map {|arg| arg.inspect}.join(', ')}]"
     when :PHI
-      "PHI  #{@dst.inspect} <= #{@regs}"
+      "PHI  #{@dst.inspect} <= #{@args}"
     else
       "#{@op}  #{@dst&.inspect}#{@opr1 ? (@dst ? ', ' : '') + @opr1.inspect : ''}#{@opr2 ? ', ' + @opr2.inspect : ''}"
     end
@@ -327,6 +326,19 @@ class BBContainer
         bb.out_regs[vreg] = @vregs[vreg].length - 1
       end
     end
+
+    # Insert phi
+    @bbs.each do |bb|
+      next if bb.in_regs.empty?
+      phis = bb.in_regs.map do |sym, gen|
+        incomings = bb.from_bbs.map do |from_bb|
+          g = from_bb.out_regs[sym]
+          @vregs[sym][g]
+        end
+        IR::phi(@vregs[sym][gen], incomings)
+      end
+      bb.irs.insert(0, *phis)
+    end
   end
 
   def propagate_const()
@@ -401,10 +413,14 @@ class BBContainer
 
   def resolve_phi()
     @bbs.each do |bb|
+      while !bb.irs.empty? && bb.irs.first.op == :PHI
+        bb.irs.shift
+      end
+
       bb.from_bbs.each do |from_bb|
         left_in_regs = bb.in_regs.keys
         from_bb.irs.each do |ir|
-          if ir.dst && bb.in_regs.has_key?(ir.dst.sym)
+          if ir.op != :PHI && ir.dst && bb.in_regs.has_key?(ir.dst.sym)
             sym = ir.dst.sym
             dst_reg = @vregs[sym][bb.in_regs[sym]]
             ir.dst = dst_reg
