@@ -1,0 +1,8 @@
+# Dead code elimination
+# https://en.wikipedia.org/wiki/Dead_code_elimination
+def dce(x)
+  y = x * 2 + 3  # To be eliminated
+  return x - 1
+end
+
+puts(dce(111))  # Should returned value is not stored.

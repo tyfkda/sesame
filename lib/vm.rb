@@ -90,7 +90,7 @@ class VM
       args = args.map {|arg| value(arg)}
       result = func.call(*args)
       call_ir = @bb[@ip - 1]
-      @regs[call_ir.dst] = result
+      @regs[call_ir.dst] = result if call_ir.dst
     else
       @callstack.push([@bbs, @bb, @ip, @regs])
       params = func[0]
@@ -110,7 +110,7 @@ class VM
   def set_ret(result)
     @bbs, @bb, @ip, @regs = @callstack.pop()
     call_ir = @bb[@ip - 1]
-    @regs[call_ir.dst] = result
+    @regs[call_ir.dst] = result if call_ir.dst
   end
 
   def value(v)
