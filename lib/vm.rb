@@ -8,6 +8,7 @@ class VM
 
     @bb = @bbs[0]
     @ip = 0
+    @result = nil
   end
 
   def run()
@@ -66,12 +67,13 @@ class VM
           @bb = ir.bb
           @ip = 0
         end
+      when :RESULT
+        @result = value(ir.opr1)
       when :RET
-        result = value(ir.opr1)
         if @callstack.empty?
-          return result
+          return @result
         end
-        set_ret(result)
+        set_ret(@result)
       when :CALL
         set_call(ir.funcname, ir.args)
       else
