@@ -243,6 +243,7 @@ class BBContainer
     make_ssa()
     minimize_phi()
     propagate_const()
+    remove_dead_expr()
     resolve_phi()
     trim()
 
@@ -431,6 +432,49 @@ class BBContainer
         end
       end
     end
+  end
+
+  def remove_dead_expr()
+    loop do
+      again = false
+      @const_regs.keys.each do |vreg|
+        next if register_used?(vreg)
+        @const_regs.delete(vreg)
+      end
+
+      @bbs.each do |bb|
+        bb.irs.each do |ir|
+          dst = ir.dst
+          next unless dst
+          next if register_used?(dst)
+
+          if ir.op == :CALL
+            ir.dst = nil
+          else
+            ir.clear()
+          end
+          if @const_regs.has_key?(dst)
+            @const_regs.delete(dst)
+          end
+          again = true
+        end
+      end
+      break unless again
+    end
+  end
+
+  def register_used?(vreg)
+    return true if @const_regs.has_value?(vreg)
+
+    @bbs.each do |bb|
+      return true if bb.in_regs[vreg.sym] == vreg || bb.out_regs[vreg.sym] == vreg
+      bb.irs.each do |ir|
+        if ir.opr1&.eql?(vreg) || ir.opr2&.eql?(vreg) || ir&.args&.any? {|arg| arg.eql?(vreg)}
+          return true
+        end
+      end
+    end
+    false
   end
 
   def resolve_phi()
