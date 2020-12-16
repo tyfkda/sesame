@@ -1,13 +1,22 @@
 #!/usr/bin/env ruby
 # -*- mode: ruby;-*-
 
+require 'optparse'
 require './lib/compiler'
 require './lib/vm'
 
 def main()
+  opt = OptionParser.new
+  opt.on('--dump-ir')
+  params = {}
+  opt.parse!(ARGV, into: params)
+
   compiler = Compiler.new()
   bbcon = compiler.compile(ARGV[0])
-  bbcon.dump()
+  if params[:"dump-ir"]
+    bbcon.dump()
+    return
+  end
 
   vm = VM.new()
   result = vm.run(bbcon.bbs)
