@@ -20,8 +20,8 @@ class Compiler
     @ret_bb = bb_split()
   end
 
-  def compile(filename)
-    toplevel = parse(filename)
+  def compile(file)
+    toplevel = parse(file)
     compile_ast(toplevel)
   end
 

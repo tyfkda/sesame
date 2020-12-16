@@ -1,0 +1,44 @@
+#!/usr/bin/env ruby
+# -*- mode: ruby;-*-
+
+require 'optparse'
+require './lib/compiler'
+require './lib/vm'
+require './runtime'
+
+Version = "0.0.1"
+
+def main()
+  opt = OptionParser.new
+  opt.banner = "SeSAme: IR Optimizer testbed\nUsage: sesame [options] [source filename...]"
+  opt.on('--dump-ir')
+  params = {}
+  opt.parse!(ARGV, into: params)
+
+  global = {
+    array_new: ->(n) { array_new(n) },
+    array_get: ->(array, i) { array_get(array, i) },
+    array_set: ->(array, i, value) { array_set(array, i, value) },
+    puts: ->(x) { puts(x) },
+  }
+  compiler = Compiler.new(global, [])
+  compiler.compile(ARGF)
+
+  if params[:"dump-ir"]
+    global.each do |k, v|
+      next if v.is_a?(Proc)
+      puts "=== #{k} #{v[0].inspect}"
+      v[1].dump()
+      puts ""
+    end
+    compiler.bbcon.dump()
+    return
+  end
+
+  vm = VM.new(global, compiler.bbcon.bbs)
+  vm.run()
+end
+
+if $0 == __FILE__
+  main()
+end
