@@ -72,6 +72,18 @@ try 'while', 55, "
   end
   return acc"
 
+try 'break', 10, "
+  acc = 0
+  i = 1
+  while 1 == 1
+    if i == 5
+      break
+    end
+    acc = acc + i
+    i = i + 1
+  end
+  return acc"
+
 try 'funcall', 987, "
   def foo(x)
     return x

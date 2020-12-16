@@ -76,6 +76,8 @@ def simplify_stmt(stmt)
     [:while,
       simplify_expr(stmt[1]),
       simplify_stmt(stmt[2])]
+  when :break
+    [:break]
   when :return0
     [:return, nil]
   when :return

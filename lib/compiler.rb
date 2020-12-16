@@ -18,6 +18,7 @@ class Compiler
     @bbcon = BBContainer.new(params, @bbs)
     set_curbb(bb_new())
     @ret_bb = bb_split()
+    @break_bb = nil
   end
 
   def compile(file)
@@ -49,6 +50,8 @@ class Compiler
       gen_if(ast)
     when :while
       gen_while(ast)
+    when :break
+      gen_break(ast)
     when :return
       gen_return(ast)
     when :expr
@@ -94,7 +97,7 @@ class Compiler
   def gen_while(ast)
     cond_bb = bb_split()
     body_bb = bb_split(cond_bb)
-    next_bb = bb_split(body_bb)
+    next_bb, save_break = push_break_bb(body_bb)
 
     set_curbb(cond_bb)
     gen_cond_jmp(ast[1], false, next_bb)
@@ -104,6 +107,25 @@ class Compiler
     @curbb.irs.push(IR::jmp(nil, cond_bb))
 
     set_curbb(next_bb)
+    pop_break_bb(save_break)
+  end
+
+  def push_break_bb(parent_bb)
+    prev = @break_bb
+    bb = bb_split(parent_bb)
+    @break_bb = bb;
+    return bb, prev
+  end
+
+  def pop_break_bb(save)
+    @break_bb = save
+  end
+
+  def gen_break(ast)
+    assert(@break_bb)
+    bb = bb_split(@curbb)
+    @curbb.irs.push(IR::jmp(nil, @break_bb))
+    set_curbb(bb)
   end
 
   def gen_cond_jmp(ast, tf, bb)
