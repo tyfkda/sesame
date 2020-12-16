@@ -69,8 +69,8 @@ def simplify_stmt(stmt)
   end
 end
 
-def parse(filename)
-  lines = File.read(filename)
+def parse(file)
+  lines = file.read()
   ast = Ripper.sexp(lines)
   assert(ast.length == 2 && ast[0] == :program)
   simplify_stmt(ast[1])

@@ -9,8 +9,8 @@ class Compiler
     set_curbb(bb_new())
   end
 
-  def compile(filename)
-    toplevel = parse(filename)
+  def compile(file)
+    toplevel = parse(file)
     gen(toplevel)
 
     bbcon = BBContainer.new(@bbs)

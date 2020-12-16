@@ -12,7 +12,7 @@ def main()
   opt.parse!(ARGV, into: params)
 
   compiler = Compiler.new()
-  bbcon = compiler.compile(ARGV[0])
+  bbcon = compiler.compile(ARGF)
   if params[:"dump-ir"]
     bbcon.dump()
     return
