@@ -246,7 +246,11 @@ class BBContainer
   def analyze()
     analyze_flow()
     make_ssa()
+#puts "\n== after make_ssa"
+#dump()
     propagate_const()
+puts "\n== after propagate_const"
+dump()
     remove_dead_expr()
     resolve_phi()
     trim()
@@ -368,7 +372,11 @@ class BBContainer
   def propagate_const()
     slots = [:opr1, :opr2]
 
-    2.times do  # To apply @const_regs backward.
+count = 0
+    loop do
+puts "=== propagate_const #{count}"
+count += 1
+      again = false
       @bbs.each do |bb|
         bb.irs.each do |ir|
           if !bb.in_regs.empty? && bb.from_bbs.length == 1
@@ -403,11 +411,14 @@ class BBContainer
 
           case ir.op
           when :MOV
+puts "again2: #{ir.inspect}"
             @const_regs[ir.dst] = ir.opr1
             ir.clear()
+            again = true
           when :ADD, :SUB, :MUL, :DIV, :MOD
             key = [ir.op, *ir.sorted_operands()]
             if @computed.has_key?(key) && @computed[key].dst != ir.dst
+puts "again1: #{ir.inspect}"
               @const_regs[ir.dst] = @computed[key].dst
               ir.clear()
             elsif ir.opr1.const? && ir.opr2.const?
@@ -425,15 +436,26 @@ class BBContainer
               else
                 error("Unhandled: #{ir}")
               end
+puts "again3: #{ir.inspect}"
               @const_regs[ir.dst] = VReg::const(value)
               ir.clear()
+              again = true
             else
+puts "again4: #{ir.inspect}"
               key = [ir.op, *ir.sorted_operands()]
               @computed[key] = ir
+            end
+          when :PHI
+            if ir.args && !ir.args.empty? && ir.args.all? {|arg| arg == ir.args[0]}
+puts "again5: #{ir.inspect}"
+              @const_regs[ir.dst] = ir.args[0]
+              ir.clear()
+              again = true
             end
           end
         end
       end
+      break unless again
     end
   end
 
@@ -481,17 +503,25 @@ class BBContainer
 
   def resolve_phi()
     @bbs.each do |bb|
-      while !bb.irs.empty? && bb.irs.first.op == :PHI
-        ir = bb.irs.shift
-        dst_reg = ir.dst
-        bb.from_bbs.each_with_index do |from_bb, ifb|
-          src_reg = ir.args[ifb]
-          if src_reg != dst_reg
-            if from_bb.insert_phi_resolver(dst_reg, src_reg)
-              # src is replaced to dst.
-              from_bb.replace_reg(src_reg, dst_reg)
+      i = 0
+      while i < bb.irs.length
+        ir = bb.irs[i]
+        if ir.op == :PHI
+          bb.irs.delete_at(i)
+          dst_reg = ir.dst
+          bb.from_bbs.each_with_index do |from_bb, ifb|
+            src_reg = ir.args[ifb]
+            if src_reg != dst_reg
+              if from_bb.insert_phi_resolver(dst_reg, src_reg)
+                # src is replaced to dst.
+                from_bb.replace_reg(src_reg, dst_reg)
+              end
             end
           end
+        elsif bb.irs.first.op == :NOP
+          i += 1
+        else
+          break
         end
       end
     end
