@@ -225,6 +225,7 @@ class BBContainer
   def optimize()
     analyze_flow()
     make_ssa()
+    minimize_phi()
     resolve_phi()
     trim()
 
@@ -354,6 +355,29 @@ class BBContainer
     end
   end
 
+  def minimize_phi()
+    mappings = {}
+    loop do
+      mappings.clear()
+      @bbs.each do |bb|
+        bb.irs.each do |ir|
+          next if ir.nop?
+          break if ir.op != :PHI
+
+          incomings = ir.args.filter {|arg| (mappings[arg] || arg) != ir.dst}.uniq
+          if incomings.length == 1
+            incoming = incomings.first
+            mappings[ir.dst] = mappings[incoming] || incoming
+            ir.clear()
+          end
+        end
+      end
+
+      break if mappings.empty?
+      replace_regs(mappings)
+    end
+  end
+
   def resolve_phi()
     @bbs.each do |bb|
       phis = {}
@@ -373,6 +397,23 @@ class BBContainer
         end.select {|ir| ir}
         from_bb.clear_phis()
         from_bb.insert_phi_movs(movs)
+      end
+    end
+  end
+
+  def replace_regs(mappings)
+    @bbs.each do |bb|
+      bb.in_regs.keys.each do |sym|
+        bb.in_regs[sym] = mappings[bb.in_regs[sym]] if mappings.has_key?(bb.in_regs[sym])
+      end
+      bb.out_regs.keys.each do |sym|
+        bb.out_regs[sym] = mappings[bb.out_regs[sym]] if mappings.has_key?(bb.out_regs[sym])
+      end
+      bb.irs.each do |ir|
+        ir.dst = mappings[ir.dst] if mappings.has_key?(ir.dst)
+        ir.opr1 = mappings[ir.opr1] if mappings.has_key?(ir.opr1)
+        ir.opr2 = mappings[ir.opr2] if mappings.has_key?(ir.opr2)
+        ir.args&.map! {|arg| mappings[arg] || arg}
       end
     end
   end
