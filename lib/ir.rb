@@ -75,6 +75,10 @@ class IR
     IR.new(:DEFUN, nil, name: name, funcindex: funcindex)
   end
 
+  def self.phi(dst, regs)
+    IR.new(:PHI, dst, args: regs)
+  end
+
   def initialize(op, dst = nil, opr1 = nil, opr2 = nil, cond: nil, bb: nil, name: nil, args: nil, funcindex: nil)
     @op = op
     @dst = dst
@@ -108,6 +112,8 @@ class IR
       "J#{@cond || 'MP'}  #{@bb.index}"
     when :CALL
       "CALL  #{@dst.inspect} <= #{@name} [#{@args.map {|arg| arg.inspect}.join(', ')}]"
+    when :PHI
+      "PHI  #{@dst.inspect} <= #{@args}"
     else
       "#{@op}  #{@dst&.inspect}#{@opr1 ? (@dst ? ', ' : '') + @opr1.inspect : ''}#{@opr2 ? ', ' + @opr2.inspect : ''}"
     end
@@ -121,7 +127,6 @@ class BB
 
   attr_reader :in_regs, :out_regs, :assigned_regs
   attr_reader :from_bbs, :to_bbs
-  attr_reader :phis
 
   def initialize(index, irs = [])
     @index = index
@@ -161,6 +166,10 @@ class BB
     @irs.delete_at(key)
   end
 
+  def put_phis(phis)
+    @irs.prepend(*phis)
+  end
+
   def inspect()
     "BB\##{@index}"
   end
@@ -185,10 +194,16 @@ class BBContainer
   def initialize(params)
     @params = params
     @bbs = []
+
+    @vregs = Hash.new {|h, k| h[k] = []}
+    @params&.each do |vreg|
+      @vregs[vreg.sym].push(vreg)
+    end
   end
 
   def optimize()
     analyze_flow()
+    make_ssa()
   end
 
   def analyze_flow()
@@ -240,6 +255,71 @@ class BBContainer
       bb.in_regs.keys.each do |sym|
         propagate.call(sym, bb.from_bbs)
       end
+    end
+  end
+
+  def make_ssa()
+    @bbs.each do |bb|
+      if bb.from_bbs.length == 1
+        # 前のBBのレジスタを使い回す
+        from_bb = bb.from_bbs.first
+        bb.in_regs.keys.each do |sym|
+          bb.in_regs[sym] = from_bb.out_regs[sym]
+        end
+      else
+        bb.in_regs.keys.each do |sym|
+          gen = @vregs[sym].length
+          vreg = VReg.new(sym, gen)
+          bb.in_regs[sym] = vreg
+          @vregs[sym].push(vreg)
+        end
+      end
+
+      curregs = bb.in_regs.clone()
+      bb.irs.each do |ir|
+        ir.opr1 = curregs[ir.opr1.sym] if ir.opr1&.not_const?
+        ir.opr2 = curregs[ir.opr2.sym] if ir.opr2&.not_const?
+        if ir.args
+          ir.args.map! do |arg|
+            arg.const? ? arg : curregs[arg.sym]
+          end
+        end
+        if ir.dst&.not_const?
+          vreg = ir.dst
+          sym = vreg.sym
+          if @vregs.has_key?(sym)
+            gen = @vregs[sym].length
+            ir.dst = vreg = VReg.new(sym, gen)
+          else
+            vreg.gen = gen = 0
+          end
+          curregs[sym] = vreg
+          @vregs[sym].push(vreg)
+        end
+      end
+
+      bb.out_regs.keys.each do |sym|
+        bb.out_regs[sym] = curregs[sym]
+      end
+    end
+
+    # Insert phi
+    @bbs.each do |bb|
+      next if bb.in_regs.empty?
+      if bb.index == 0
+        phis = bb.in_regs.map do |sym, vreg|
+          param = @params.find {|p| p.sym == sym}
+          IR::phi(@vregs[sym][vreg.gen], [param])
+        end
+      elsif bb.from_bbs.length > 1
+        phis = bb.in_regs.map do |sym, vreg|
+          incomings = bb.from_bbs.map do |from_bb|
+            from_bb.out_regs[sym]
+          end
+          IR::phi(@vregs[sym][vreg.gen], incomings)
+        end
+      end
+      bb.put_phis(phis)
     end
   end
 

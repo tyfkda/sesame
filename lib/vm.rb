@@ -13,13 +13,16 @@ class VM
   end
 
   def run()
+    lastbb = nil
     loop do
       while @ip >= @bb.length
+        lastbb = @bb
         @ip = 0
         @bb = @bb.next_bb
         unless @bb
           return @result if @callstack.empty?
           pop_callstack(@result)
+          lastbb = nil
         end
       end
       ir = @bb[@ip]
@@ -47,6 +50,7 @@ class VM
           else error("Unhandled cond: #{ir.cond.inspect}")
         end
         if jmp
+          lastbb = @bb
           @bb = ir.bb
           @ip = 0
         end
@@ -54,10 +58,19 @@ class VM
         @result = value(ir.opr1)
       when :CALL
         funcall(ir.name, ir.args, ir.dst)
+        lastbb = nil
       when :DEFUN
         bbcon = @bbcon_array[ir.funcindex]
         @global[ir.name] = [bbcon.params, bbcon]  # Function.
-      when :SET_GLOBAL
+      when :PHI  # デバッグ用：PHIを実行時に解釈
+        unless lastbb
+          raise "unexpected" unless ir.args.length == 1
+          i = 0
+        else
+          i = @bb.from_bbs.find_index(lastbb)
+        end
+        raise "phi failed, #{ir.inspect}, #{i}, #{@locals.inspect}" unless i && @locals.has_key?(ir.args[i])
+        @locals[ir.dst] = @locals[ir.args[i]]
       else
         $stderr.puts "Unknown op: #{ir.inspect}"
         exit 1
