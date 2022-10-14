@@ -96,6 +96,10 @@ class IR
     @dst = @opr1 = @opr2 = @cond = @bb = @name = @args = @funcindex = nil
   end
 
+  def nop?()
+    @op == :NOP
+  end
+
   def [](key)
     instance_variable_get("@#{key}")
   end
@@ -170,6 +174,23 @@ class BB
     @irs.prepend(*phis)
   end
 
+  def clear_phis()
+    @irs.each do |ir|
+      next if ir.nop?
+      break if ir.op != :PHI
+      ir.clear()
+    end
+  end
+
+  def insert_phi_movs(movs)
+    return if movs.empty?
+    pos = @irs.length
+    if pos > 0 && @irs[pos - 1].op == :JMP
+      pos -= 1
+    end
+    @irs.insert(pos, *movs)
+  end
+
   def inspect()
     "BB\##{@index}"
   end
@@ -204,6 +225,16 @@ class BBContainer
   def optimize()
     analyze_flow()
     make_ssa()
+    resolve_phi()
+    trim()
+
+    # 関数の引数を最初のレジスタに変更
+    unless @bbs.empty? || !@params
+      bb0 = @bbs.first
+      @params.map! do |vreg|
+        bb0.in_regs[vreg.sym]
+      end
+    end
   end
 
   def analyze_flow()
@@ -320,6 +351,43 @@ class BBContainer
         end
       end
       bb.put_phis(phis)
+    end
+  end
+
+  def resolve_phi()
+    @bbs.each do |bb|
+      phis = {}
+      while !bb.irs.empty? && (bb.irs.first.op == :PHI || bb.irs.first.op == :NOP)
+        ir = bb.irs.shift
+        if ir.op == :PHI
+          phis[ir.dst.sym] = ir
+        end
+      end
+
+      bb.from_bbs.each_with_index do |from_bb, from_index|
+        movs = bb.in_regs.keys.map do |sym|
+          dst_reg = bb.in_regs[sym]
+          src_reg = phis.has_key?(sym) ? phis[sym].args[from_index] : from_bb.out_regs[sym]
+          val = src_reg
+          dst_reg != val ? IR::mov(dst_reg, val) : nil
+        end.select {|ir| ir}
+        from_bb.clear_phis()
+        from_bb.insert_phi_movs(movs)
+      end
+    end
+  end
+
+  def trim()
+    @bbs.each do |bb|
+      ip = 0
+      while ip < bb.length
+        ir = bb[ip]
+        if ir.nop?
+          bb.delete_at(ip)
+        else
+          ip += 1
+        end
+      end
     end
   end
 
