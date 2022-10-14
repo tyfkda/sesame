@@ -100,6 +100,21 @@ class IR
     @op == :NOP
   end
 
+  def sorted_operands()
+    order = [@opr1, @opr2]
+    case @op
+    when :ADD, :MUL
+      order.sort! do |a, b|
+        if a.not_const? != b.not_const?
+          a.not_const? ? -1 : 1
+        else
+          a <=> b
+        end
+      end
+    end
+    order
+  end
+
   def [](key)
     instance_variable_get("@#{key}")
   end
@@ -215,6 +230,7 @@ class BBContainer
   def initialize(params)
     @params = params
     @bbs = []
+    @const_regs = {}
 
     @vregs = Hash.new {|h, k| h[k] = []}
     @params&.each do |vreg|
@@ -226,6 +242,7 @@ class BBContainer
     analyze_flow()
     make_ssa()
     minimize_phi()
+    propagate_const()
     resolve_phi()
     trim()
 
@@ -378,6 +395,44 @@ class BBContainer
     end
   end
 
+  def propagate_const()
+    computed = {}
+    @bbs.each do |bb|
+      bb.irs.each do |ir|
+        ir.opr1 = @const_regs[ir.opr1] if @const_regs.has_key?(ir.opr1)
+        ir.opr2 = @const_regs[ir.opr2] if @const_regs.has_key?(ir.opr2)
+        ir.args&.each_with_index do |arg, i|
+          ir.args[i] = @const_regs[arg] if @const_regs.has_key?(arg)
+        end
+
+        case ir.op
+        when :MOV
+          @const_regs[ir.dst] = ir.opr1
+          ir.clear()
+        when :ADD, :SUB, :MUL, :DIV, :MOD
+          key = [ir.op, *ir.sorted_operands()]
+          if ir.opr1.const? && ir.opr2.const?
+            value = case ir.op
+            when :ADD then ir.opr1.value + ir.opr2.value
+            when :SUB then ir.opr1.value - ir.opr2.value
+            when :MUL then ir.opr1.value * ir.opr2.value
+            when :DIV then ir.opr1.value / ir.opr2.value
+            when :MOD then ir.opr1.value % ir.opr2.value
+            else error("Unhandled: #{ir}")
+            end
+            @const_regs[ir.dst] = VReg::const(value)
+            ir.clear()
+          elsif computed.has_key?(key)
+            @const_regs[ir.dst] = computed[key].dst
+            ir.clear()
+          else
+            computed[key] = ir
+          end
+        end
+      end
+    end
+  end
+
   def resolve_phi()
     @bbs.each do |bb|
       phis = {}
@@ -392,7 +447,7 @@ class BBContainer
         movs = bb.in_regs.keys.map do |sym|
           dst_reg = bb.in_regs[sym]
           src_reg = phis.has_key?(sym) ? phis[sym].args[from_index] : from_bb.out_regs[sym]
-          val = src_reg
+          val = @const_regs[src_reg] || src_reg
           dst_reg != val ? IR::mov(dst_reg, val) : nil
         end.select {|ir| ir}
         from_bb.clear_phis()
